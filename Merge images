@@ -1,0 +1,246 @@
+import os
+import cv2
+import glob
+import tkinter as tk
+from tkinter import ttk, Entry, Button, Toplevel, Scale, Checkbutton, StringVar, Radiobutton, messagebox
+from PIL import Image, ImageTk
+import re
+import numpy as np
+
+# Specify the folder containing image files
+input_folder = input("Enter the path to the folder containing image files: ")
+
+# Check if the folder exists
+if not os.path.exists(input_folder):
+    print("Folder not found.")
+    exit()
+
+# Specify the file extension of the image files you want to display
+file_extension = '.tif'  # Change this to match your image file extension
+
+# Find all image files in the folder with the specified extension
+image_files = glob.glob(os.path.join(input_folder, f'*{file_extension}'))
+
+# Check if any image files were found
+if not image_files:
+    print(f"No {file_extension} files found in the folder.")
+    exit()
+
+# Sort the image files alphabetically by filename
+# and for filenames containing numbers, sort them in ascending numerical order
+def sort_key(filename):
+    # Split the filename into alpha and numeric parts
+    parts = re.split(r'(\d+)', filename)
+    return [int(part) if part.isdigit() else part for part in parts]
+
+image_files.sort(key=sort_key)
+
+# Initialize a tkinter window for Image Viewer
+image_viewer = tk.Tk()
+image_viewer.title("Image Viewer")
+
+# Initialize a tkinter window for Image Merge
+image_merge = None
+merged_image = None  # Declare merged_image as a global variable
+
+# Create a list to store loaded images along with their filenames
+images = []
+
+# Load and store all images
+for image_file in image_files:
+    img = cv2.imread(image_file)
+    if img is not None:
+        images.append((cv2.cvtColor(img, cv2.COLOR_BGR2RGB), os.path.basename(image_file)))  # Store image and filename
+    else:
+        print(f"Failed to load image: {image_file}")
+
+# Check if any valid images were loaded
+if not images:
+    print("No valid image files found in the folder.")
+    exit()
+
+# Create a label to display the current image in Image Viewer
+image_viewer_label = tk.Label(image_viewer)
+image_viewer_label.pack()
+
+# Create a label to display the image filename in the bottom left corner
+image_filename_label = tk.Label(image_viewer, anchor="w", padx=10)
+image_filename_label.pack(side="left", fill="x")
+
+# Create a slider to navigate through images in Image Viewer
+image_index = tk.IntVar()
+image_index.set(0)
+slider_viewer = ttk.Scale(image_viewer, from_=0, to=len(images) - 1, variable=image_index)
+slider_viewer.pack()
+
+# Function to update the displayed image and filename in Image Viewer
+def update_image_viewer(event=None):
+    index = image_index.get()
+    if 0 <= index < len(images):
+        # Convert the OpenCV image to a PIL Image
+        pil_image = Image.fromarray(images[index][0])
+        # Create a PhotoImage object from the PIL Image
+        photo = ImageTk.PhotoImage(pil_image)
+        image_viewer_label.config(image=photo)
+        image_viewer_label.image = photo
+
+        # Display the filename in the bottom left corner
+        filename = images[index][1]
+        image_filename_label.config(text=filename)
+
+# Bind the slider in Image Viewer to update the image
+slider_viewer.bind("<Motion>", update_image_viewer)
+slider_viewer.bind("<ButtonRelease-1>", update_image_viewer)
+
+# Initial image display in Image Viewer
+update_image_viewer()
+
+# Function to open Image Merge window
+def open_image_merge_window():
+    global image_merge, merged_image  # Declare merged_image as a global variable
+    if image_merge:
+        image_merge.destroy()
+
+    merged_image = None  # Initialize merged_image
+    image_merge = tk.Toplevel(image_viewer)
+    image_merge.title("Image Merge")
+
+    # Create a label to display the merged image in Image Merge
+    image_merge_label = tk.Label(image_merge)
+    image_merge_label.pack()
+
+    # Create a checkbox to toggle color adjustment in Image Merge
+    color_adjustment_var = tk.BooleanVar()
+    color_adjustment_checkbox = Checkbutton(image_merge, text="Change Image Color", variable=color_adjustment_var)
+    color_adjustment_checkbox.pack()
+
+    # Color mapping options for Image Merge
+    color_mapping_options = {
+        "Original Color": None,
+        "Red": cv2.COLORMAP_AUTUMN,
+        "Orange": cv2.COLORMAP_HOT,
+        "Yellow": cv2.COLORMAP_SUMMER,
+        "Green": cv2.COLORMAP_JET,
+        "Purple": cv2.COLORMAP_PINK,
+    }
+
+    # Variable to store the selected color mapping option in Image Merge
+    selected_color_mapping = StringVar()
+    selected_color_mapping.set("Original Color")  # Default to original color
+
+    # Function to apply color mapping to the image in Image Merge
+    def apply_color_mapping(image, color_mapping_option):
+        if color_mapping_option is None:
+            return image  # No color mapping, return the original image
+
+        # Apply the specified color mapping
+        return cv2.applyColorMap(image, color_mapping_option)
+
+    # Function to merge selected images and display in Image Merge
+    def merge_images():
+        global merged_image  # Declare merged_image as a global variable
+        try:
+            start_index = int(start_entry.get())
+            end_index = int(end_entry.get())
+
+            if 0 <= start_index <= end_index <= len(images) - 1:
+                selected_indices = list(range(start_index, end_index + 1))
+            else:
+                messagebox.showinfo("Info", "Invalid custom image range.")
+                return
+        except ValueError:
+            messagebox.showinfo("Info", "Invalid input. Please enter valid indices.")
+            return
+
+        if not selected_indices:
+            messagebox.showinfo("Info", "No images selected.")
+            return
+
+        # Initialize the merged image with the first selected image
+        merged_image = images[selected_indices[0]][0]
+
+        # Merge the selected images with overlap
+        for index in selected_indices[1:]:
+            merged_image = cv2.add(merged_image, images[index][0])
+
+        # Apply color mapping if the checkbox is checked
+        if color_adjustment_var.get():
+            selected_color_option = selected_color_mapping.get()
+            color_mapping = color_mapping_options[selected_color_option]
+            merged_image = apply_color_mapping(merged_image, color_mapping)
+
+        # Normalize pixel values to fit within the valid range (0-255)
+        merged_image = np.clip(merged_image, 0, 255).astype(np.uint8)
+
+        # Show the merged image in Image Merge
+        pil_merged_image = Image.fromarray(merged_image)
+        photo = ImageTk.PhotoImage(pil_merged_image)
+        image_merge_label.config(image=photo)
+        image_merge_label.image = photo
+
+    # Function to capture the merged image
+    def capture_image():
+        global merged_image  # Declare merged_image as a global variable
+        if merged_image is not None:
+            cv2.imwrite("captured_image.png", merged_image)
+            captured_image_window = tk.Toplevel(image_merge)
+            captured_image_window.title("Captured Image")
+            pil_captured_image = Image.fromarray(merged_image)
+            photo = ImageTk.PhotoImage(pil_captured_image)
+            captured_image_label = tk.Label(captured_image_window, image=photo)
+            captured_image_label.photo = photo
+            captured_image_label.pack()
+
+    # Create custom image selection widgets in Image Merge
+    custom_frame = tk.Frame(image_merge)
+    custom_frame.pack()
+
+    start_label = tk.Label(custom_frame, text="Start Index:")
+    start_label.grid(row=0, column=0)
+    start_entry = Entry(custom_frame)
+    start_entry.grid(row=0, column=1)
+
+    end_label = tk.Label(custom_frame, text="End Index:")
+    end_label.grid(row=0, column=2)
+    end_entry = Entry(custom_frame)
+    end_entry.grid(row=0, column=3)
+
+    select_button = Button(custom_frame, text="Select Custom Images", command=merge_images)
+    select_button.grid(row=0, column=4)
+
+    # Create radio buttons for selecting color mapping options in Image Merge
+    color_mapping_frame = tk.Frame(image_merge)
+    color_mapping_frame.pack()
+
+    for option in color_mapping_options.keys():
+        radio_button = Radiobutton(color_mapping_frame, text=option, variable=selected_color_mapping, value=option)
+        radio_button.pack(side="left")
+
+    # Create a button to capture the merged image
+    capture_button = Button(image_merge, text="Capture Image", command=capture_image)
+    capture_button.pack()
+
+    # Function to perform skin stratification (for demonstration purposes)
+    def stratify_skin():
+        global merged_image
+        if merged_image is not None:
+            # Perform a basic skin stratification operation (dummy code)
+            stratified_image = merged_image.copy()
+            lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+            upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+            mask = cv2.inRange(cv2.cvtColor(stratified_image, cv2.COLOR_RGB2HSV), lower_skin, upper_skin)
+            stratified_image[mask != 255] = [0, 0, 0]  # Set non-skin pixels to black
+            cv2.imshow("Stratified Skin", stratified_image)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+    # Create a button to perform skin stratification
+    stratify_button = Button(image_merge, text="Stratify Skin", command=stratify_skin)
+    stratify_button.pack()
+
+# Create a button in Image Viewer to open Image Merge
+open_merge_button = Button(image_viewer, text="Open Image Merge", command=open_image_merge_window)
+open_merge_button.pack()
+
+# Run the tkinter main loop for Image Viewer
+image_viewer.mainloop()
